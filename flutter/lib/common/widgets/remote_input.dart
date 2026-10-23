@@ -13,7 +13,7 @@ import 'package:flutter_hbb/models/input_model.dart';
 
 import './gestures.dart';
 
-class RawKeyFocusScope extends StatelessWidget {
+class RawKeyFocusScope extends StatefulWidget {
   final FocusNode? focusNode;
   final ValueChanged<bool>? onFocusChange;
   final InputModel inputModel;
@@ -27,27 +27,188 @@ class RawKeyFocusScope extends StatelessWidget {
   });
 
   @override
+  State<RawKeyFocusScope> createState() => _RawKeyFocusScopeState();
+}
+
+class _RawKeyFocusScopeState extends State<RawKeyFocusScope> {
+  final _imeController = TextEditingController();
+  final _imeFocusNode = FocusNode();
+  String _lastImeText = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _imeController.addListener(_onImeTextChanged);
+  }
+
+  @override
+  void dispose() {
+    _imeController.removeListener(_onImeTextChanged);
+    _imeController.dispose();
+    _imeFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _onImeTextChanged() {
+    final newValue = _imeController.text;
+    if (newValue == _lastImeText) return;
+
+    // IME is composing (showing candidate window) — don't send anything yet.
+    if (_imeController.value.composing.start != -1 &&
+        _imeController.value.composing.start !=
+            _imeController.value.composing.end) {
+      return;
+    }
+
+    // Diff: figure out added / removed characters.
+    if (newValue.length > _lastImeText.length) {
+      final added = newValue.substring(_lastImeText.length);
+      if (added.isNotEmpty) {
+        widget.inputModel.inputString(added);
+      }
+    } else if (newValue.length < _lastImeText.length) {
+      final diff = _lastImeText.length - newValue.length;
+      for (var i = 0; i < diff; i++) {
+        widget.inputModel.inputKey('VK_BACK', press: true);
+      }
+    }
+    _lastImeText = newValue;
+
+    // Keep the buffer short.
+    if (newValue.length > 32) {
+      _imeController.text = '';
+      _lastImeText = '';
+    }
+  }
+
+  // Intercept printable character keys so they go through IME instead of
+  // being sent as raw scancodes. Function keys and shortcuts bubble up.
+  KeyEventResult _handleImeKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyUpEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    final logical = event.logicalKey;
+    // Always let modifier keys through.
+    if (logical == LogicalKeyboardKey.controlLeft ||
+        logical == LogicalKeyboardKey.controlRight ||
+        logical == LogicalKeyboardKey.altLeft ||
+        logical == LogicalKeyboardKey.altRight ||
+        logical == LogicalKeyboardKey.shiftLeft ||
+        logical == LogicalKeyboardKey.shiftRight ||
+        logical == LogicalKeyboardKey.metaLeft ||
+        logical == LogicalKeyboardKey.metaRight ||
+        logical == LogicalKeyboardKey.capsLock) {
+      return KeyEventResult.ignored;
+    }
+
+    // If Ctrl/Alt/Meta is held down, this is a shortcut — let it through.
+    final hardware = HardwareKeyboard.instance;
+    if (hardware.isControlPressed ||
+        hardware.isAltPressed ||
+        hardware.isMetaPressed) {
+      return KeyEventResult.ignored;
+    }
+
+    // Function / navigation keys — let them through.
+    const passThroughKeys = {
+      LogicalKeyboardKey.enter,
+      LogicalKeyboardKey.numpadEnter,
+      LogicalKeyboardKey.backspace,
+      LogicalKeyboardKey.tab,
+      LogicalKeyboardKey.escape,
+      LogicalKeyboardKey.delete,
+      LogicalKeyboardKey.arrowUp,
+      LogicalKeyboardKey.arrowDown,
+      LogicalKeyboardKey.arrowLeft,
+      LogicalKeyboardKey.arrowRight,
+      LogicalKeyboardKey.home,
+      LogicalKeyboardKey.end,
+      LogicalKeyboardKey.pageUp,
+      LogicalKeyboardKey.pageDown,
+      LogicalKeyboardKey.f1,
+      LogicalKeyboardKey.f2,
+      LogicalKeyboardKey.f3,
+      LogicalKeyboardKey.f4,
+      LogicalKeyboardKey.f5,
+      LogicalKeyboardKey.f6,
+      LogicalKeyboardKey.f7,
+      LogicalKeyboardKey.f8,
+      LogicalKeyboardKey.f9,
+      LogicalKeyboardKey.f10,
+      LogicalKeyboardKey.f11,
+      LogicalKeyboardKey.f12,
+      LogicalKeyboardKey.numLock,
+      LogicalKeyboardKey.scrollLock,
+      LogicalKeyboardKey.pause,
+      LogicalKeyboardKey.printScreen,
+      LogicalKeyboardKey.insert,
+    };
+    if (passThroughKeys.contains(logical)) {
+      return KeyEventResult.ignored;
+    }
+
+    // Printable character — swallow it here. The actual text (including
+    // IME-composed Chinese) will arrive via the TextField listener.
+    return KeyEventResult.handled;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // https://github.com/flutter/flutter/issues/154053
     final useRawKeyEvents = isLinux && !isWeb;
-    // FIXME: On Windows, `AltGr` will generate `Alt` and `Control` key events,
-    // while `Alt` and `Control` are separated key events for en-US input method.
     return FocusScope(
         autofocus: true,
         child: Focus(
             autofocus: true,
             canRequestFocus: true,
             focusNode: focusNode,
-            onFocusChange: onFocusChange,
+            onFocusChange: (focused) {
+              if (focused) {
+                Future.microtask(() {
+                  if (!_imeFocusNode.hasFocus) {
+                    _imeFocusNode.requestFocus();
+                  }
+                });
+              }
+              widget.onFocusChange?.call(focused);
+            },
             onKey: useRawKeyEvents
                 ? (FocusNode data, RawKeyEvent event) =>
-                    inputModel.handleRawKeyEvent(event)
+                    widget.inputModel.handleRawKeyEvent(event)
                 : null,
             onKeyEvent: useRawKeyEvents
                 ? null
                 : (FocusNode node, KeyEvent event) =>
-                    inputModel.handleKeyEvent(event),
-            child: child));
+                    widget.inputModel.handleKeyEvent(event),
+            child: Stack(
+              children: [
+                widget.child,
+                Positioned(
+                  left: -10000,
+                  top: 0,
+                  child: SizedBox(
+                    width: 1,
+                    height: 1,
+                    child: Focus(
+                      onKeyEvent: _handleImeKeyEvent,
+                      child: TextField(
+                        controller: _imeController,
+                        focusNode: _imeFocusNode,
+                        style: const TextStyle(
+                            color: Colors.transparent, fontSize: 1),
+                        decoration: const InputDecoration.collapsed(
+                            hintText: '', border: InputBorder.none),
+                        enableInteractiveSelection: false,
+                        showCursor: false,
+                        autofocus: true,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )));
   }
 }
 

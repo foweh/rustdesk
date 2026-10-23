@@ -1353,6 +1353,16 @@ class InputModel {
         command: command);
   }
 
+  /// Send a string (Unicode) to the remote peer directly.
+  /// The remote peer types this string via key_sequence, bypassing local key events.
+  /// Use for IME-composed text like Chinese/Japanese/Korean.
+  void inputString(String text) {
+    if (!keyboardPerm) return;
+    if (isViewCamera) return;
+    if (text.isEmpty) return;
+    bind.sessionInputString(sessionId: sessionId, value: text);
+  }
+
   static Map<String, dynamic> getMouseEventMove() => {
         'type': _kMouseEventMove,
         'buttons': 0,
