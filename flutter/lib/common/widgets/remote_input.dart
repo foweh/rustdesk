@@ -111,7 +111,7 @@ class _RawKeyFocusScopeState extends State<RawKeyFocusScope> {
     }
 
     // Function / navigation keys — let them through.
-    const passThroughKeys = {
+    final passThroughKeys = <LogicalKeyboardKey>{
       LogicalKeyboardKey.enter,
       LogicalKeyboardKey.numpadEnter,
       LogicalKeyboardKey.backspace,
@@ -161,7 +161,7 @@ class _RawKeyFocusScopeState extends State<RawKeyFocusScope> {
         child: Focus(
             autofocus: true,
             canRequestFocus: true,
-            focusNode: focusNode,
+            focusNode: widget.focusNode,
             onFocusChange: (focused) {
               if (focused) {
                 Future.microtask(() {
